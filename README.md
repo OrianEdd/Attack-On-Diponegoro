@@ -2,8 +2,11 @@
 
 > Game 2D action platformer bergaya metroidvania dengan combat berbasis parry.
 
-![Concept preview](docs/preview.gif)
-*Concept preview. Bukan rekaman gameplay asli.*
+<p align="center">
+  <img src="docs/preview.gif" alt="Concept preview" width="720">
+  <br>
+  <em>Concept preview. Bukan rekaman gameplay asli.</em>
+</p>
 
 ## Tentang Game
 Jawa, 1825. Perang besar pecah ketika Pangeran Diponegoro mengangkat
