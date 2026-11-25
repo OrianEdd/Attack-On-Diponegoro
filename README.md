@@ -29,7 +29,7 @@ dengan serangan telak.
 - Sistem parry dengan jendela waktu dan attack cancel
 - Health dan posture damage
 - Musuh dengan telegraph serangan yang bisa dibaca
-- *(tambah seiring progres)*
+- *(progres)*
 
 ## Status
 🚧 Dalam pengembangan
@@ -51,8 +51,6 @@ dengan serangan telak.
 | Serang | Klik Kiri / J |
 | Parry | Klik Kanan / K |
 | Dodge | Shift |
-
-*(Sesuaikan dengan kontrol game kamu)*
 
 ## Dibuat dengan
 - Unity 6 (6000.6.5f1)
