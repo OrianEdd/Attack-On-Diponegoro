@@ -48,8 +48,9 @@ dengan serangan telak.
 |------|--------|
 | Gerak | A / D |
 | Lompat | Space |
-| Serang | J |
-| Parry | K |
+| Serang | Klik Kiri / J |
+| Parry | Klik Kanan / K |
+| Dodge | Shift |
 
 *(Sesuaikan dengan kontrol game kamu)*
 
