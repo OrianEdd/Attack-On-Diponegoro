@@ -1,6 +1,6 @@
 # Attack on Diponegoro
 
-> Game 2D action platformer bergaya metroidvania dengan combat berbasis parry.
+> Rusdi vs. pasukan kolonial. 2D action platformer..
 
 <p align="center">
   <img src="docs/preview.gif" alt="Concept preview" width="720">
