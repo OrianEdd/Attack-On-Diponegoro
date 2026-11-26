@@ -295,6 +295,9 @@ namespace PGIM.Sekiro2D
             rb.linearVelocity = new Vector2(0f, rb.linearVelocity.y);
             anim.SetTrigger("Attack");
 
+            // Feedback audio: suara tebasan (whoosh) saat musuh memulai ayunan.
+            CombatFeedback.PlaySlashSfx();
+
             // Wind-up: musuh bersiap-siap. Selama fase ini TIDAK ada damage sama sekali,
             // sehingga pemain punya kesempatan menekan parry sebelum ayunan mendarat.
             yield return new WaitForSeconds(attackImpactTime);
@@ -436,6 +439,16 @@ namespace PGIM.Sekiro2D
             IsHurt = false;
             attackImpactReached = false;
             attackStartTime = -999f;
+
+            // Feedback: suara retak guard + percikan oranye-merah besar + getaran
+            // kamera yang kuat (guard break = momen berat).
+            CombatFeedback.PlayGuardBreakSfx();
+            CombatFeedback.SpawnSparks(
+                transform.position,
+                new Color(1f, 0.45f, 0.1f),
+                34,
+                0.22f);
+            CombatFeedback.ShakeCamera(0.18f, 0.2f);
 
             // Hentikan serangan yang sedang berjalan (bila ada) agar ayunan tidak
             // tetap menimpah pemain saat musuh sudah stagger.

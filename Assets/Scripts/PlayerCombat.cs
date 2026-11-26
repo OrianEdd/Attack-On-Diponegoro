@@ -348,6 +348,9 @@ namespace PGIM.Sekiro2D
             IsAttacking = true;
             lastAttackTime = Time.time;
 
+            // Feedback audio: suara tebasan (whoosh) saat pemain memulai serangan.
+            CombatFeedback.PlaySlashSfx();
+
             if (anim != null)
             {
                 // Reset trigger serangan sebelumnya supaya tidak menumpuk.
@@ -395,6 +398,14 @@ namespace PGIM.Sekiro2D
                 {
                     Debug.Log($"[PlayerCombat] Hit enemy: {enemy.name} with damage {baseDamage} & posture damage {basePostureDamage}");
                     enemyKlewang.TakeDamage(baseDamage, basePostureDamage, transform.position);
+
+                    // Feedback: suara impact + percikan api merah/oranye kecil di posisi musuh.
+                    CombatFeedback.PlayHitFleshSfx();
+                    CombatFeedback.SpawnSparks(
+                        enemyKlewang.transform.position,
+                        new Color(1f, 0.35f, 0.1f),
+                        10,
+                        0.12f);
                 }
                 else
                 {
@@ -538,6 +549,16 @@ namespace PGIM.Sekiro2D
                 OnPostureChanged?.Invoke(currentPosture, maxPosture);
                 StartCoroutine(HitStopCo(hitStopDuration));
 
+                // Feedback: suara block (thud tumpul) + percikan putih/abu-abu kecil
+                // + getaran kamera ringan.
+                CombatFeedback.PlayBlockSfx();
+                CombatFeedback.SpawnSparks(
+                    transform.position,
+                    new Color(0.85f, 0.85f, 0.9f),
+                    8,
+                    0.1f);
+                CombatFeedback.ShakeCamera(0.06f, 0.05f);
+
                 // Check if posture breaks from blocking -> GUARD BREAK (bukan death!)
                 if (currentPosture >= maxPosture)
                 {
@@ -593,6 +614,16 @@ namespace PGIM.Sekiro2D
                 enemyKlewang.ReceiveParryPostureDamage(parryPostureDamageToEnemy, transform.position);
             }
 
+            // Feedback Perfect Parry: metallic ping nyaring + percikan emas terang
+            // di titik tengah antara pemain dan musuh + getaran kamera.
+            CombatFeedback.PlayPerfectParrySfx();
+            CombatFeedback.SpawnSparks(
+                GetParrySparkPosition(enemyKlewang),
+                new Color(1f, 0.85f, 0.2f),
+                26,
+                0.16f);
+            CombatFeedback.ShakeCamera(0.12f, 0.14f);
+
             // Efek hit-stop + konfirmasi visual deflect.
             StartCoroutine(HitStopCo(deflectHitStopDuration));
 
@@ -605,6 +636,23 @@ namespace PGIM.Sekiro2D
             // supaya transisi "Parry -> Defend" tetap bisa terjadi (parry sukses bukan
             // berarti tombol dilepas). Logika game IsBlocking tetap FALSE karena kita
             // masih berada di dalam jendela parry.
+        }
+
+        /// <summary>
+        /// Menghitung posisi percikan untuk efek Perfect Parry.
+        ///
+        /// Posisi yang dipakai adalah TITIK TENGAH antara pemain dan musuh
+        /// (tempat kedua bilah Pedang bertemu), supaya efek terlihat tepat di
+        /// lokasi benturan. Kalau musuh tidak ditemukan, posisi pemain dipakai
+        /// sebagai fallback.
+        /// </summary>
+        private Vector3 GetParrySparkPosition(EnemyKlewang enemyKlewang)
+        {
+            Vector3 playerPosition = transform.position;
+
+            if (enemyKlewang == null) return playerPosition;
+
+            return (playerPosition + enemyKlewang.transform.position) * 0.5f;
         }
 
         /// <summary>
@@ -681,6 +729,16 @@ namespace PGIM.Sekiro2D
             isParryActiveWindow = false;
             isParryHeld = false;
             attackRequested = false;
+
+            // Feedback: suara retak guard + percikan oranye-merah besar + getaran
+            // kamera yang kuat (guard break = momen berat).
+            CombatFeedback.PlayGuardBreakSfx();
+            CombatFeedback.SpawnSparks(
+                transform.position,
+                new Color(1f, 0.45f, 0.1f),
+                34,
+                0.22f);
+            CombatFeedback.ShakeCamera(0.18f, 0.2f);
 
             // Lepaskan mode block pada parameter Animator supaya state "Defend"
             // bisa kembali ke "Idle" (transisi "Defend -> Idle" butuh IsBlocking == false).
