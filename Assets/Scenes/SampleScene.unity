@@ -358,14 +358,20 @@ MonoBehaviour:
     m_Bits: 1
   baseDamage: 18
   basePostureDamage: 16
-  attackCooldown: 2
+  attackCooldown: 1.1
   attackImpactTime: 0.3
   attackRecoverTime: 0.25
+  attackImpactTolerance: 0.05
   maxHealth: 150
   maxPosture: 100
   postureRecoveryRate: 20
   postureRecoveryDelay: 2
-  guardBreakDuration: 1.5
+  parryPostureDamage: 30
+  slashPostureDamage: 12
+  guardBreakDuration: 3.5
+  canBeDeathblown: 1
+  guardBreakKnockbackDuration: 0.2
+  guardBreakKnockbackSpeed: 6
   moveSpeed: 3.5
   detectionRange: 7
   attackRange: 1.8
