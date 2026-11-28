@@ -45,6 +45,8 @@ namespace PGIM.Sekiro2D
         // Dipakai PlayerCombat & PlayerController agar animasi "Defend" tidak ditimpa
         // oleh animasi gerakan (Idle / Run).
         public bool IsBlocking => playerCombat != null && playerCombat.IsBlocking;
+        // True ketika pemain sedang mengeksekusi Deathblow (eksekusi musuh).
+        public bool IsDeathblowing => playerCombat != null && playerCombat.IsDeathblowing;
 
         [Header("Dodge Settings")]
         [SerializeField] private float dashSpeed = 14f;
@@ -104,7 +106,7 @@ namespace PGIM.Sekiro2D
 
             // Dodge input (LeftShift or L)
             bool isStunned = playerCombat != null && (playerCombat.IsHurt || playerCombat.IsDead || playerCombat.IsStaggered);
-            if ((Input.GetKeyDown(KeyCode.LeftShift) || Input.GetKeyDown(KeyCode.L)) && isGrounded && !IsDashing && Time.time >= lastDashTime + dashCooldown && !isStunned)
+            if ((Input.GetKeyDown(KeyCode.LeftShift) || Input.GetKeyDown(KeyCode.L)) && isGrounded && !IsDashing && Time.time >= lastDashTime + dashCooldown && !isStunned && !IsDeathblowing)
             {
                 StartDodge();
             }
@@ -208,6 +210,30 @@ namespace PGIM.Sekiro2D
             Vector3 localScale = transform.localScale;
             localScale.x *= -1f;
             transform.localScale = localScale;
+        }
+
+        /// <summary>
+        /// Menghadap pemain ke arah horizontal tertentu (dipakai saat Deathblow
+        /// supaya pemain menghadap musuh yang akan dieksekusi).
+        ///
+        /// Scale visual (localScale.x) DAN flag isFacingRight diset langsung ke
+        /// nilai yang sama, mengikuti pola Flip() milik EnemyKlewang, supaya
+        /// keduanya tidak pernah berbeda.
+        /// </summary>
+        /// <param name="directionX">Arah horizontal tujuan (positif = kanan).</param>
+        public void FaceTowards(float directionX)
+        {
+            // Nilai 0 (atau mendekati 0) -> tidak ada arah, jangan dibalik.
+            if (Mathf.Abs(directionX) < 0.0001f) return;
+
+            bool shouldFaceRight = directionX > 0f;
+            if (shouldFaceRight == isFacingRight) return;
+
+            isFacingRight = shouldFaceRight;
+
+            Vector3 scale = transform.localScale;
+            scale.x = Mathf.Abs(scale.x) * (isFacingRight ? 1f : -1f);
+            transform.localScale = scale;
         }
 
         private void UpdateAnimator()

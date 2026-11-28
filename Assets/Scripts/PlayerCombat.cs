@@ -25,6 +25,7 @@ namespace PGIM.Sekiro2D
         private const string AnimStateParry = "Parry";
         private const string AnimStateDefend = "Defend";
         private const string AnimStateDeath = "Death";
+        private const string AnimStateAttack3 = "Attack3";
         private const string AnimParamIsBlocking = "IsBlocking";
         private const string AnimTriggerAttack1 = "Attack1";
         private const string AnimTriggerAttack2 = "Attack2";
@@ -59,6 +60,27 @@ namespace PGIM.Sekiro2D
         // Durasi pemain tidak bisa menyerang/block setelah posture pecah.
         [SerializeField] private float guardBreakDuration = 1.2f;
 
+        [Header("Deathblow Settings")]
+        // Jangkauan pencarian musuh yang bisa dieksekusi. Sedikit lebih panjang
+        // dari jangkauan tebasan biasa (attackPoint ~1.1 + attackRadius 0.8).
+        [SerializeField] private float deathblowRange = 2.4f;
+        // Kecepatan dekati musuh saat eksekusi (unit/detik).
+        [SerializeField] private float deathblowApproachSpeed = 6f;
+        // Batas maksimum durasi pendekatan (detik). Durasi sebenarnya =
+        // (jarak / deathblowApproachSpeed), dibatasi nilai ini.
+        [SerializeField] private float deathblowMaxApproachDuration = 0.35f;
+        // Jeda (detik) sejak animasi serang dipicu sampai ExecuteDeathblow() dipanggil.
+        [SerializeField] private float deathblowImpactDelay = 0.15f;
+        // Durasi hit-stop saat eksekusi berhasil (pakai HitStopCo yang sudah ada).
+        [SerializeField] private float deathblowHitStopDuration = 0.18f;
+        // Jarak aman antara ujung badan pemain dan ujung badan musuh saat berhenti.
+        [SerializeField] private float deathblowStopGap = 0.12f;
+        // Ketinggian raycast pengaman dari kaki pemain.
+        [SerializeField] private float deathblowRaycastHeight = 1f;
+        // Layer mask KHUSUS untuk raycast pengaman (dinding & tanah saja).
+        // Collider pemain sendiri dan trigger (mis. hitbox musuh) diabaikan.
+        [SerializeField] private LayerMask deathblowBlockerLayers;
+
         [Header("References")]
         [SerializeField] private Animator anim;
         [SerializeField] private PlayerController playerController;
@@ -73,6 +95,9 @@ namespace PGIM.Sekiro2D
         public bool IsHurt { get; private set; }
         // True saat pemain sedang mengalami Guard Break / Stagger (posture penuh).
         public bool IsStaggered { get; private set; }
+        // True saat pemain sedang mengeksekusi Deathblow (eksekusi musuh).
+        // Dipakai PlayerController agar dodge & Facing dikunci selama eksekusi.
+        public bool IsDeathblowing => isDeathblowActive;
 
         private int comboStep = 0;
         private float lastAttackTime;
@@ -90,6 +115,16 @@ namespace PGIM.Sekiro2D
         // Disimpan sebagai field terpisah agar status stagger bisa di-reset dengan aman
         // dari mana pun (mis. saat coroutine dibatalkan / object dinonaktifkan).
         private bool isGuardBroken;
+
+        // --- Deathblow (eksekusi) ---
+        // True selama eksekusi Deathblow berjalan (input & gerak terkunci).
+        private bool isDeathblowActive;
+        // True saat pemain memiliki i-frames (tidak bisa terkena damage) selama eksekusi.
+        private bool isDeathblowInvulnerable;
+        // Coroutine eksekusi Deathblow yang sedang berjalan.
+        private Coroutine deathblowRoutine;
+        // Cache collider Capsule pemain untuk menghitung jarak berhenti & menyaring raycast.
+        private CapsuleCollider2D playerCollider;
 
         // Waktu (Time.time) saat jendela Perfect Parry dibuka / ditutup.
         private float parryWindowStartTime = -999f;
@@ -125,6 +160,7 @@ namespace PGIM.Sekiro2D
             if (anim == null) anim = GetComponent<Animator>();
             if (playerController == null) playerController = GetComponent<PlayerController>();
             if (rb == null) rb = GetComponent<Rigidbody2D>();
+            if (playerCollider == null) playerCollider = GetComponent<CapsuleCollider2D>();
 
             if (attackPoint == null)
             {
@@ -139,6 +175,14 @@ namespace PGIM.Sekiro2D
             // Terapkan nilai timing kanonik agar perilaku konsisten di scene mana pun
             // (nilai yang ter-serialize di scene bisa saja hasil tuning lama).
             ApplyCombatTimingSettings();
+
+            // Mask pengaman Deathblow: kalau belum diisi di Inspector, pakai layer
+            // Ground (dinding & tanah) saja. Collider pemain & trigger musuh
+            // TIDAK termasuk mask ini, sesuai desain raycast pengaman.
+            if (deathblowBlockerLayers.value == 0)
+            {
+                deathblowBlockerLayers = LayerMask.GetMask("Ground");
+            }
         }
 
         /// <summary>
@@ -174,6 +218,7 @@ namespace PGIM.Sekiro2D
                 && !IsHurt
                 && !IsStaggered
                 && !isGuardBroken
+                && !isDeathblowActive
                 && (playerController == null || (playerController.IsGrounded && !playerController.IsDashing));
 
             // Attack Cancel: tekan defend saat sedang menyerang -> batalkan serangan
@@ -194,7 +239,7 @@ namespace PGIM.Sekiro2D
             // Perhatikan: pemeriksaan ini dilakukan SESUDAH UpdateParryWindow()
             // supaya bila pemain menekan attack & defend di frame yang sama,
             // defend (parry) yang menang dan serangan TIDAK ikut terpicu.
-            if ((Input.GetMouseButtonDown(0) || Input.GetKeyDown(KeyCode.J)) && !IsParrying && !IsHurt && !IsStaggered)
+            if ((Input.GetMouseButtonDown(0) || Input.GetKeyDown(KeyCode.J)) && !IsParrying && !IsHurt && !IsStaggered && !isDeathblowActive)
             {
                 if (playerController != null && (!playerController.IsGrounded || playerController.IsDashing)) return;
 
@@ -202,7 +247,7 @@ namespace PGIM.Sekiro2D
                 attackRequested = true;
             }
 
-            if (attackRequested && !IsAttacking && !IsStaggered)
+            if (attackRequested && !IsAttacking && !IsStaggered && !isDeathblowActive)
             {
                 ExecuteAttack();
             }
@@ -344,6 +389,19 @@ namespace PGIM.Sekiro2D
 
         private void ExecuteAttack()
         {
+            // ============================================================
+            // DEATHBLOW: dicek PALING AWAL, sebelum pengecekan state apa pun.
+            // Kalau ada musuh yang bisa dieksekusi (Guard Break + boleh
+            // dieksekusi) di depan pemain, combo biasa dibatalkan dan
+            // eksekusi Deathblow yang mengambil alih.
+            // ============================================================
+            EnemyKlewang deathblowTarget = FindDeathblowTarget();
+            if (deathblowTarget != null)
+            {
+                StartDeathblow(deathblowTarget);
+                return;
+            }
+
             attackRequested = false;
             IsAttacking = true;
             lastAttackTime = Time.time;
@@ -454,6 +512,320 @@ namespace PGIM.Sekiro2D
             comboStep = 0;
         }
 
+        // ==================================================================
+        // DEATHBLOW (eksekusi musuh yang sedang Guard Break)
+        // ==================================================================
+
+        /// <summary>
+        /// Mencari musuh yang bisa dieksekusi (Deathblow) di depan pemain.
+        ///
+        /// Syarat musuh:
+        ///   1. Berada dalam jangkauan <see cref="deathblowRange"/>.
+        ///   2. Sedang Guard Break (<see cref="EnemyKlewang.IsGuardBroken"/>).
+        ///   3. Boleh dieksekusi (<see cref="EnemyKlewang.CanBeDeathblown"/>).
+        ///   4. Berada di DEPAN arah hadap pemain (bukan di belakang).
+        ///
+        /// Kalau lebih dari satu musuh memenuhi syarat, yang TERDEKAT dipakai.
+        /// </summary>
+        private EnemyKlewang FindDeathblowTarget()
+        {
+            // Arah hadap pemain: localScale.x positif = menghadap kanan.
+            float facingSign = transform.localScale.x >= 0f ? 1f : -1f;
+
+            Collider2D[] hits = Physics2D.OverlapCircleAll(transform.position, deathblowRange, enemyLayer);
+            EnemyKlewang best = null;
+            float bestDistance = float.MaxValue;
+
+            foreach (Collider2D hit in hits)
+            {
+                if (hit == null) continue;
+
+                EnemyKlewang enemy = hit.GetComponent<EnemyKlewang>();
+                if (enemy == null || enemy.IsDead) continue;
+
+                // Musuh harus sedang Guard Break DAN boleh dieksekusi.
+                if (!enemy.IsGuardBroken || !enemy.CanBeDeathblown) continue;
+
+                // Musuh harus di depan pemain (arah hadap yang sama).
+                float deltaX = enemy.transform.position.x - transform.position.x;
+                if (Mathf.Sign(deltaX) != facingSign && Mathf.Abs(deltaX) > 0.01f) continue;
+
+                float distance = Mathf.Abs(deltaX);
+                if (distance < bestDistance)
+                {
+                    bestDistance = distance;
+                    best = enemy;
+                }
+            }
+
+            return best;
+        }
+
+        /// <summary>
+        /// Memulai eksekusi Deathblow terhadap musuh yang dipilih.
+        ///
+        /// Efek:
+        ///   1. Combo serangan biasa dibatalkan (tidak ada tebasan biasa).
+        ///   2. Input & gerak pemain dikunci (IsAttacking = true).
+        ///   3. i-frames aktif selama eksekusi berlangsung.
+        ///   4. Coroutine <see cref="DeathblowRoutineCo"/> menjalankan pendekatan.
+        /// </summary>
+        private void StartDeathblow(EnemyKlewang target)
+        {
+            if (target == null || isDeathblowActive) return;
+
+            Debug.Log("[PlayerCombat] DEATHBLOW started!");
+
+            // Batalkan combo biasa (tidak ada tebasan biasa pada eksekusi).
+            CancelActiveAttack();
+
+            // Kunci input & gerak: IsAttacking = true membuat PlayerController
+            // mengunci gerak horizontal, lompat, dan Facing tidak berubah.
+            IsAttacking = true;
+            lastAttackTime = Time.time;
+
+            // i-frames: pemain aman selama eksekusi berlangsung.
+            isDeathblowInvulnerable = true;
+            isDeathblowActive = true;
+
+            if (deathblowRoutine != null)
+            {
+                StopCoroutine(deathblowRoutine);
+                deathblowRoutine = null;
+            }
+            deathblowRoutine = StartCoroutine(DeathblowRoutineCo(target));
+        }
+
+        /// <summary>
+        /// Routine utama eksekusi Deathblow.
+        ///
+        /// Tahapan:
+        ///   1. Hadapkan pemain ke musuh.
+        ///   2. Dekati musuh memakai Rigidbody2D.MovePosition, dengan durasi =
+        ///      (jarak / deathblowApproachSpeed), dibatasi deathblowMaxApproachDuration.
+        ///      Jarak berhenti dihitung dengan Physics2D.Raycast memakai mask
+        ///      khusus (dinding & tanah), sehingga collider pemain sendiri dan
+        ///      trigger hitbox musuh tidak ikut dihitung.
+        ///   3. SETELAH sampai di target: picu animasi serang Attack3.
+        ///   4. Tunggu deathblowImpactDelay, lalu panggil ExecuteDeathblow().
+        ///   5. Kalau berhasil: hit-stop (HitStopCo yang sudah ada) + feedback.
+        ///      i-frames tetap aktif sampai hit-stop selesai.
+        /// </summary>
+        private IEnumerator DeathblowRoutineCo(EnemyKlewang target)
+        {
+            // ------------------------------------------------------------------
+            // Tahap 1: hadapkan pemain ke musuh.
+            // ------------------------------------------------------------------
+            if (playerController != null)
+            {
+                float dx = target.transform.position.x - transform.position.x;
+                playerController.FaceTowards(dx);
+            }
+
+            // ------------------------------------------------------------------
+            // Tahap 2: dekati musuh dengan MovePosition.
+            //
+            // Durasi pendekatan dihitung SATU KALI di awal:
+            //   durasi = (jarak yang harus ditempuh / deathblowApproachSpeed),
+            //   dibatasi deathblowMaxApproachDuration (maks 0.35 detik).
+            // ------------------------------------------------------------------
+            float elapsed = 0f;
+            float initialDistance = Mathf.Abs(target.transform.position.x - transform.position.x);
+            float initialStopDistance = GetDeathblowStopDistance(target, target.transform.position.x - transform.position.x);
+            float travelDistance = Mathf.Max(0f, initialDistance - initialStopDistance);
+            float approachDuration = Mathf.Min(
+                deathblowMaxApproachDuration,
+                travelDistance / Mathf.Max(0.01f, deathblowApproachSpeed));
+
+            while (elapsed < approachDuration)
+            {
+                // Target hilang (mati / dihancurkan) di tengah jalan -> batalkan.
+                if (target == null || target.IsDead)
+                {
+                    EndDeathblow();
+                    yield break;
+                }
+
+                float dx = target.transform.position.x - transform.position.x;
+                float distance = Mathf.Abs(dx);
+
+                // Hitung jarak aman: ujung badan pemain + ujung badan musuh + gap,
+                // dengan raycast pengaman memakai mask khusus (dinding & tanah saja).
+                float stopDistance = GetDeathblowStopDistance(target, dx);
+
+                // Sudah cukup dekat -> berhenti mendekat.
+                if (distance <= stopDistance) break;
+
+                // Gerak horizontal via MovePosition (bukan mengubah transform.position).
+                if (rb != null)
+                {
+                    float stepDistance = Mathf.Min(
+                        deathblowApproachSpeed * Time.fixedDeltaTime,
+                        distance - stopDistance);
+
+                    if (stepDistance > 0f)
+                    {
+                        Vector2 targetPos = rb.position;
+                        targetPos.x += Mathf.Sign(dx) * stepDistance;
+
+                        // Raycast pengaman: jangan masuk ke dinding / tanah.
+                        Vector2 castOrigin = new Vector2(rb.position.x, rb.position.y + deathblowRaycastHeight);
+                        RaycastHit2D blockHit = Physics2D.Raycast(
+                            castOrigin,
+                            new Vector2(Mathf.Sign(dx), 0f),
+                            stepDistance,
+                            deathblowBlockerLayers);
+
+                        if (blockHit.collider && !IsPlayerOwnCollider(blockHit.collider))
+                        {
+                            // Tertahan penghalang -> berhenti mendekat di sini.
+                            break;
+                        }
+
+                        // Velo horizontal dinolkan supaya tidak melawan MovePosition.
+                        rb.linearVelocity = new Vector2(0f, rb.linearVelocity.y);
+                        rb.MovePosition(targetPos);
+                    }
+                }
+
+                elapsed += Time.fixedDeltaTime;
+                yield return new WaitForFixedUpdate();
+            }
+
+            // ------------------------------------------------------------------
+            // Tahap 3: sampai di target -> picu animasi serang Attack3.
+            // ------------------------------------------------------------------
+            if (anim != null)
+            {
+                anim.ResetTrigger(AnimTriggerAttack1);
+                anim.ResetTrigger(AnimTriggerAttack2);
+                anim.ResetTrigger(AnimTriggerAttack3);
+                anim.SetTrigger(AnimTriggerAttack3);
+
+                // Pengaman: kalau Animator sudah berada di state "Attack3",
+                // transisi AnyState tidak akan terpicu lagi (CanTransitionToSelf
+                // dinonaktifkan di controller), jadi state-nya di-crossfade
+                // secara eksplisit supaya animasi serang tetap tampil.
+                if (anim.GetCurrentAnimatorStateInfo(0).IsName(AnimStateAttack3))
+                {
+                    anim.CrossFadeInFixedTime(AnimStateAttack3, 0.05f, 0, 0f);
+                }
+            }
+
+            // ------------------------------------------------------------------
+            // Tahap 4: jeda sebelum eksekusi -> ExecuteDeathblow().
+            // ------------------------------------------------------------------
+            yield return new WaitForSecondsRealtime(Mathf.Max(0f, deathblowImpactDelay));
+
+            // Target hilang saat jeda -> batalkan, jangan eksekusi.
+            if (target == null || target.IsDead)
+            {
+                if (anim != null) anim.ResetTrigger(AnimTriggerAttack3);
+                EndDeathblow();
+                yield break;
+            }
+
+            bool executed = target.ExecuteDeathblow();
+
+            if (!executed)
+            {
+                // Syarat eksekusi tidak terpenuhi (mis. musuh sudah tidak bisa dieksekusi).
+                Debug.Log("[PlayerCombat] DEATHBLOW failed: enemy rejected execution.");
+                if (anim != null) anim.ResetTrigger(AnimTriggerAttack3);
+                EndDeathblow();
+                yield break;
+            }
+
+            // ------------------------------------------------------------------
+            // Tahap 5: hit-stop + feedback Deathblow.
+            // ------------------------------------------------------------------
+            Vector3 enemyPosition = target.transform.position;
+
+            // Hit-stop memakai sistem yang sudah ada (HitStopCo).
+            StartCoroutine(HitStopCo(deathblowHitStopDuration));
+
+            // Feedback visual & audio Deathblow.
+            CombatFeedback.PlayDeathblowFeedback(enemyPosition);
+
+            // i-frames tetap aktif sampai hit-stop selesai.
+            yield return new WaitForSecondsRealtime(Mathf.Max(0f, deathblowHitStopDuration));
+
+            EndDeathblow();
+        }
+
+        /// <summary>
+        /// Menghitung jarak aman berhenti antara pemain dan musuh memakai
+        /// Physics2D.Raycast dengan mask KHUSUS (dinding & tanah).
+        ///
+        /// Mask ini dipakai supaya:
+        ///   - Collider Capsule pemain sendiri tidak ikut terhitung.
+        ///   - Trigger hitbox musuh (jika ada) tidak ikut terhitung.
+        ///
+        /// Jarak aman = ujung badan pemain + ujung badan musuh + gap.
+        /// </summary>
+        private float GetDeathblowStopDistance(EnemyKlewang target, float directionSign)
+        {
+            float playerRadius = playerCollider != null
+                ? Mathf.Min(Mathf.Abs(playerCollider.size.x), Mathf.Abs(playerCollider.size.y)) * 0.5f
+                : 0.4f;
+            float enemyRadius = 0f;
+
+            if (target != null)
+            {
+                CapsuleCollider2D enemyCollider = target.GetComponent<CapsuleCollider2D>();
+                if (enemyCollider != null)
+                {
+                    // CapsuleCollider2D.size.x adalah diameter, radius = setengahnya.
+                    enemyRadius = Mathf.Abs(enemyCollider.size.x) * 0.5f;
+                }
+            }
+
+            float baseDistance = playerRadius + enemyRadius + deathblowStopGap;
+
+            if (rb == null) return baseDistance;
+
+            Vector2 origin = new Vector2(rb.position.x, rb.position.y + deathblowRaycastHeight);
+            RaycastHit2D hit = Physics2D.Raycast(
+                origin,
+                new Vector2(directionSign, 0f),
+                deathblowRange,
+                deathblowBlockerLayers);
+
+            // Kalau ada penghalang lebih dekat -> berhenti di sana.
+            if (hit.collider && hit.distance < baseDistance)
+            {
+                return Mathf.Max(0f, hit.distance - playerRadius);
+            }
+
+            return baseDistance;
+        }
+
+        /// <summary>
+        /// Mengecek apakah sebuah collider adalah collider milik pemain sendiri
+        /// (capsule badan). Dipakai sebagai pengaman tambahan pada raycast
+        /// pengaman supaya pemain tidak terhalang oleh badannya sendiri.
+        /// </summary>
+        private bool IsPlayerOwnCollider(Collider2D collider)
+        {
+            return collider != null && playerCollider != null && collider == playerCollider;
+        }
+
+        /// <summary>
+        /// Mengakhiri eksekusi Deathblow: melepas kunci input, i-frames, dan
+        /// antrean combo. WAJIB dipanggil di SEMUA jalur keluar (berhasil,
+        /// gagal, target hilang, atau pemain mati) supaya karakter tidak
+        /// terkunci selamanya.
+        /// </summary>
+        private void EndDeathblow()
+        {
+            isDeathblowActive = false;
+            isDeathblowInvulnerable = false;
+            attackRequested = false;
+            comboStep = 0;
+            IsAttacking = false;
+            deathblowRoutine = null;
+        }
+
         /// <summary>
         /// Memulai animasi parry saat tombol defend ditekan.
         ///
@@ -524,6 +896,15 @@ namespace PGIM.Sekiro2D
         public void TakeDamage(float damage, float postureDamage, Vector2 attackerPosition)
         {
             if (IsDead) return;
+
+            // i-frames Deathblow: saat eksekusi berjalan, pemain tidak bisa
+            // terkena damage sama sekali. Dicek PALING ATAS, sebelum logika
+            // parry / block / guard break, supaya eksekusi tidak bisa diinterupsi.
+            if (isDeathblowInvulnerable)
+            {
+                Debug.Log("[PlayerCombat] DEATHBLOW i-frames: damage avoided.");
+                return;
+            }
 
             // If player is currently dodging/invulnerable, ignore all damage and posture damage
             if (playerController != null && playerController.IsInvulnerable)
@@ -805,9 +1186,15 @@ namespace PGIM.Sekiro2D
             isHitStopActive = false;
             attackRequested = false;
 
+            // Deathblow: lepaskan kunci input & i-frames supaya pemain yang mati
+            // di tengah eksekusi tidak terkunci selamanya.
+            isDeathblowActive = false;
+            isDeathblowInvulnerable = false;
+
             attackRoutine = null;
             parryRoutine = null;
             guardBreakRoutine = null;
+            deathblowRoutine = null;
 
             // Lepaskan juga parameter Animator "IsBlocking" supaya state "Defend"
             // tidak nyangkut ketika objek diaktifkan kembali.
