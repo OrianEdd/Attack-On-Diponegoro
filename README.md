@@ -38,7 +38,7 @@ dengan serangan telak.
 - [x] Sistem parry
 - [x] Health dan posture damage
 - [x] AI musuh pertama
-- [ ] Hit-stop dan feedback combat
+- [x] Hit-stop dan feedback combat
 - [ ] Ruangan uji dan checkpoint
 - [ ] Beberapa area dan musuh baru
 - [ ] Polish: animasi, VFX, SFX

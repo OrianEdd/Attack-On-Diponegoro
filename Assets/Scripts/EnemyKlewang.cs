@@ -714,6 +714,63 @@ namespace PGIM.Sekiro2D
             Die();
         }
 
+        /// <summary>
+        /// Eksekusi Deathblow dari sisi pemain: musuh langsung dibunuh tanpa
+        /// melewati jalur damage maupun jalur posture.
+        ///
+        /// Syarat (semua harus terpenuhi):
+        ///   1. Musuh sedang Guard Break (IsGuardBroken == true).
+        ///   2. Musuh boleh dieksekusi (CanBeDeathblown == true).
+        ///   3. Musuh belum mati (!IsDead).
+        ///
+        /// ExecuteDeathblow() SENGAJA tidak memakai TakeDamage() atau jalur
+        /// posture: keduanya menolak damage saat IsStaggered == true, sehingga
+        /// tidak ada jalur biasa yang bisa mengakhiri musuh yang sedang
+        /// stagger. Method ini terpisah supaya logika parry, Guard Break, dan
+        /// posture yang sudah ada tetap utuh.
+        /// </summary>
+        /// <returns>True bila eksekusi berhasil, false bila syarat tidak terpenuhi.</returns>
+        public bool ExecuteDeathblow()
+        {
+            if (IsDead) return false;
+            if (!IsGuardBroken) return false;
+            if (!CanBeDeathblown) return false;
+
+            // Hentikan timer + coroutine Guard Break supaya musuh tidak
+            // "sembuh" (reset posture, kembalikan warna, dll) di tengah
+            // animasi mati.
+            if (staggerRoutine != null)
+            {
+                StopCoroutine(staggerRoutine);
+                staggerRoutine = null;
+            }
+
+            if (knockbackRoutine != null)
+            {
+                StopCoroutine(knockbackRoutine);
+                knockbackRoutine = null;
+            }
+            isGuardBreakKnockbackActive = false;
+
+            // Kembalikan warna sprite ke warna ASLI yang tersimpan.
+            RestoreSpriteColor();
+
+            // Sembunyikan indikator Guard Break (objeknya lalu dihancurkan
+            // di Die() supaya tidak tertinggal selama animasi mati).
+            HideGuardBreakIndicator();
+
+            // Health jadi 0 supaya UI health bar ikut kosong.
+            currentHealth = 0f;
+            OnHealthChanged?.Invoke(currentHealth, maxHealth);
+
+            Debug.Log("[EnemyKlewang] DEATHBLOW executed by player.");
+
+            // Picu kematian lewat jalur kematian yang sudah ada.
+            Die();
+
+            return true;
+        }
+
         // ==================================================================
         // Hitbox serangan
         // ==================================================================
@@ -948,6 +1005,9 @@ namespace PGIM.Sekiro2D
             IsStaggered = false;
             if (rb != null) rb.linearVelocity = Vector2.zero;
             anim.SetTrigger("Death");
+            // Indikator Guard Break dihancurkan di sini supaya tidak
+            // tertinggal melayang selama animasi mati.
+            DestroyGuardBreakIndicator();
             OnEnemyDeath?.Invoke();
             Debug.Log("[EnemyKlewang] Enemy Klewang defeated!");
             Destroy(gameObject, 2.0f);
